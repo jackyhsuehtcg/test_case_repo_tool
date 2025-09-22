@@ -162,3 +162,4 @@ manual_sync_integration_test_report.json
 tests/
 tools/
 .DS_Store
+test_case_repo.db_backup
