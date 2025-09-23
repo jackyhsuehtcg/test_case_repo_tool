@@ -3142,30 +3142,103 @@ function resetBulkTextState() {
 }
 
 /**
- * 解析文字輸入的 CSV 格式資料
+ * 解析文字輸入的 CSV 格式資料，支援包含換行符號的字段
  * @param {string} rawText - 原始文字輸入
  * @returns {object} - { items: [{line, case_no, title, tcg_numbers}], errors: [{line, code, message, raw}], duplicates: [{case_no, lines}] }
  */
 function parseBulkText(rawText) {
     const normalizedText = rawText.replace(/\r\n?/g, '\n');
-    const lines = normalizedText.split('\n').map((line, index) => ({
-        line: index + 1,
-        raw: line,
-        content: line.trim()
-    }));
+    
+    // 重新組合被雙引號包圍且跨越多行的字段
+    const processedLines = [];
+    let currentRecord = '';
+    let inQuotedField = false;
+    let lineNumber = 1;
+    
+    const lines = normalizedText.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmedLine = line.trim();
+        
+        if (!inQuotedField) {
+            // 檢查這行是否有未閉合的引號字段
+            let quoteCount = 0;
+            let inQuote = false;
+            for (let j = 0; j < line.length; j++) {
+                if (line[j] === '"') {
+                    if (!inQuote || (j > 0 && line[j-1] !== '\\\\')) {
+                        inQuote = !inQuote;
+                        quoteCount++;
+                    }
+                }
+            }
+            
+            // 如果引號數量為奇數，表示有未閉合的引號
+            if (quoteCount % 2 === 1) {
+                currentRecord = line;
+                inQuotedField = true;
+            } else {
+                // 正常的行
+                processedLines.push({
+                    line: lineNumber++,
+                    raw: line,
+                    content: trimmedLine
+                });
+            }
+        } else {
+            // 繼續之前的記錄
+            currentRecord += '\n' + line;
+            
+            // 檢查這行是否結束了引號字段
+            if (line.includes('"')) {
+                const lastQuoteIndex = line.lastIndexOf('"');
+                // 檢查引號是否被轉義
+                let isEscaped = false;
+                let backslashCount = 0;
+                for (let j = lastQuoteIndex - 1; j >= 0; j--) {
+                    if (line[j] === '\\\\') {
+                        backslashCount++;
+                    } else {
+                        break;
+                    }
+                }
+                isEscaped = backslashCount % 2 === 1;
+                
+                if (!isEscaped) {
+                    // 引號未被轉義，結束字段
+                    processedLines.push({
+                        line: lineNumber++,
+                        raw: currentRecord,
+                        content: currentRecord.trim()
+                    });
+                    currentRecord = '';
+                    inQuotedField = false;
+                }
+            }
+        }
+    }
+    
+    // 處理最後可能未閉合的引號字段
+    if (inQuotedField && currentRecord) {
+        processedLines.push({
+            line: lineNumber,
+            raw: currentRecord,
+            content: currentRecord.trim()
+        });
+    }
 
     const items = [];
     const errors = [];
     const caseNumbers = new Map(); // case_no -> [line numbers]
 
-    for (const lineObj of lines) {
+    for (const lineObj of processedLines) {
         const { line, raw, content } = lineObj;
 
         if (!content) continue;
 
         let cleanContent = content;
         if (cleanContent.startsWith('(Conflict)')) {
-            cleanContent = cleanContent.replace(/^\(Conflict\)\s*/, '').trim();
+            cleanContent = cleanContent.replace(/^$Conflict$\s*/, '').trim();
         }
 
         const columns = parseCsvLine(cleanContent);
