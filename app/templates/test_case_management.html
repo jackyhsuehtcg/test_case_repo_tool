@@ -3147,7 +3147,14 @@ function resetBulkTextState() {
  * @returns {object} - { items: [{line, case_no, title, tcg_numbers}], errors: [{line, code, message, raw}], duplicates: [{case_no, lines}] }
  */
 function parseBulkText(rawText) {
-    const normalizedText = rawText.replace(/\r\n?/g, '\n');
+    // 先將 \\n 字符串轉換為實際的換行符號
+    // 但要避免轉換已經存在的實際換行符號
+    let processedText = rawText.replace(/\\n/g, '\n'); // 先處理轉義的 \\n
+
+    processedText = processedText.replace(/\\r/g, '\r'); // 再處理 \\r
+
+    
+    const normalizedText = processedText.replace(/\r\n?/g, '\n');
     
     // 重新組合被雙引號包圍且跨越多行的字段
     const processedLines = [];
@@ -3238,7 +3245,7 @@ function parseBulkText(rawText) {
 
         let cleanContent = content;
         if (cleanContent.startsWith('(Conflict)')) {
-            cleanContent = cleanContent.replace(/^$Conflict$\s*/, '').trim();
+            cleanContent = cleanContent.replace(/^\(Conflict\)\s*/, '').trim();
         }
 
         const columns = parseCsvLine(cleanContent);
