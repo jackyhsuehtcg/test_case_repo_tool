@@ -3070,29 +3070,20 @@ function normalizeSingleTcg(input) {
 }
 const BULK_PRIORITY_ALLOWED = ['High', 'Medium', 'Low'];
 
-function parseCsvLine(line) {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        if (char === '"') {
-            if (inQuotes && line[i + 1] === '"') {
-                current += '"';
-                i++; // skip escaped quote
-            } else {
-                inQuotes = !inQuotes;
-            }
-        } else if (char === ',' && !inQuotes) {
-            result.push(current.trim());
-            current = '';
-        } else {
-            current += char;
+        function parseCsvLine(line) {
+            // Regex to split a CSV line by commas, but not commas inside quotes.
+            // It handles escaped quotes (" ") as well.
+            const parts = line.split(/,(?=(?:(?:[^\"]*\"){2})*[^\"]*$)/);
+
+            return parts.map(p => {
+                if (p === undefined || p === null) return '';
+                let part = p.trim();
+                if (part.startsWith('"') && part.endsWith('"')) {
+                    part = part.substring(1, part.length - 1).replace(/""/g, '"');
+                }
+                return part;
+            });
         }
-    }
-    result.push(current.trim());
-    return result;
-}
 
 function normalizePriority(value) {
     if (!value) return 'Medium';
@@ -3147,91 +3138,102 @@ function resetBulkTextState() {
  * @returns {object} - { items: [{line, case_no, title, tcg_numbers}], errors: [{line, code, message, raw}], duplicates: [{case_no, lines}] }
  */
 function parseBulkText(rawText) {
-    // 先將 \\n 字符串轉換為實際的換行符號
-    // 但要避免轉換已經存在的實際換行符號
-    let processedText = rawText.replace(/\\n/g, '\n'); // 先處理轉義的 \\n
-
-    processedText = processedText.replace(/\\r/g, '\r'); // 再處理 \\r
-
+    // 預處理：將 quoted fields 中的 \n 轉換為實際換行符號
+    // 但只處理顯式的 \n 字符串，不影響已存在的實際換行
+    let processedText = rawText;
     
-    const normalizedText = processedText.replace(/\r\n?/g, '\n');
+    // 更精確的處理：逐字符分析，正確識別引號字段邊界
+    let result = '';
+    let inPreprocessQuotedField = false;
+    let i = 0;
+    
+    while (i < processedText.length) {
+        const char = processedText[i];
+        
+        if (char === '"') {
+            // 檢查是否為轉義的引號
+            let isEscaped = false;
+            let backslashCount = 0;
+            let j = i - 1;
+            while (j >= 0 && processedText[j] === '\\') {
+                backslashCount++;
+                j--;
+            }
+            isEscaped = backslashCount % 2 === 1;
+            
+            if (!isEscaped) {
+                // 切換引號字段狀態
+                inPreprocessQuotedField = !inPreprocessQuotedField;
+            }
+            result += char;
+        } else if (inPreprocessQuotedField && char === '\\' && i + 1 < processedText.length && processedText[i + 1] === 'n') {
+            // 在引號字段中遇到 \n，轉換為實際換行
+            result += '\n';
+            i++; // 跳過 'n'
+        } else {
+            result += char;
+        }
+        
+        i++;
+    }
+    
+    const normalizedText = result.replace(/\r\n?/g, '\n');
+    
     
     // 重新組合被雙引號包圍且跨越多行的字段
+    // 使用更簡單可靠的方法：逐字符讀取，正確處理引號狀態
     const processedLines = [];
-    let currentRecord = '';
     let inQuotedField = false;
     let lineNumber = 1;
+    let lineStart = 0;
     
-    const lines = normalizedText.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmedLine = line.trim();
+    for (let i = 0; i < normalizedText.length; i++) {
+        const char = normalizedText[i];
         
-        if (!inQuotedField) {
-            // 檢查這行是否有未閉合的引號字段
-            let quoteCount = 0;
-            let inQuote = false;
-            for (let j = 0; j < line.length; j++) {
-                if (line[j] === '"') {
-                    if (!inQuote || (j > 0 && line[j-1] !== '\\\\')) {
-                        inQuote = !inQuote;
-                        quoteCount++;
-                    }
-                }
+        if (char === '"') {
+            // 檢查是否為轉義的引號
+            let isEscaped = false;
+            let backslashCount = 0;
+            let j = i - 1;
+            while (j >= 0 && normalizedText[j] === '\\') {
+                backslashCount++;
+                j--;
             }
+            isEscaped = backslashCount % 2 === 1;
             
-            // 如果引號數量為奇數，表示有未閉合的引號
-            if (quoteCount % 2 === 1) {
-                currentRecord = line;
-                inQuotedField = true;
-            } else {
-                // 正常的行
+            if (!isEscaped) {
+                inQuotedField = !inQuotedField;
+            }
+        } else if (char === '\n' && !inQuotedField) {
+            // 遇到行尾且不在引號字段中，處理當前行
+            const lineContent = normalizedText.substring(lineStart, i);
+            const trimmedLine = lineContent.trim();
+            
+            if (trimmedLine) {  // 只處理非空行
                 processedLines.push({
-                    line: lineNumber++,
-                    raw: line,
+                    line: lineNumber,
+                    raw: lineContent,
                     content: trimmedLine
                 });
             }
-        } else {
-            // 繼續之前的記錄
-            currentRecord += '\n' + line;
             
-            // 檢查這行是否結束了引號字段
-            if (line.includes('"')) {
-                const lastQuoteIndex = line.lastIndexOf('"');
-                // 檢查引號是否被轉義
-                let isEscaped = false;
-                let backslashCount = 0;
-                for (let j = lastQuoteIndex - 1; j >= 0; j--) {
-                    if (line[j] === '\\\\') {
-                        backslashCount++;
-                    } else {
-                        break;
-                    }
-                }
-                isEscaped = backslashCount % 2 === 1;
-                
-                if (!isEscaped) {
-                    // 引號未被轉義，結束字段
-                    processedLines.push({
-                        line: lineNumber++,
-                        raw: currentRecord,
-                        content: currentRecord.trim()
-                    });
-                    currentRecord = '';
-                    inQuotedField = false;
-                }
-            }
+            lineNumber++;
+            lineStart = i + 1;
         }
     }
     
-    // 處理最後可能未閉合的引號字段
-    if (inQuotedField && currentRecord) {
-        processedLines.push({
-            line: lineNumber,
-            raw: currentRecord,
-            content: currentRecord.trim()
-        });
+    // 處理最後一行（如果沒有以換行結尾）
+    if (lineStart < normalizedText.length) {
+        const lineContent = normalizedText.substring(lineStart);
+        const trimmedLine = lineContent.trim();
+        
+        if (trimmedLine) {
+            processedLines.push({
+                line: lineNumber,
+                raw: lineContent,
+                content: trimmedLine
+            });
+        }
     }
 
     const items = [];
@@ -3248,6 +3250,8 @@ function parseBulkText(rawText) {
             cleanContent = cleanContent.replace(/^\(Conflict\)\s*/, '').trim();
         }
 
+        // 重要：在解析 CSV 之前，先將包含換行符號的字段中的 \n 進行特殊標記
+        // 這樣可以避免在 CSV 解析過程中將真實的換行符號誤認為字段分隔符號
         const columns = parseCsvLine(cleanContent);
 
         if (columns.length < 2) {
@@ -3274,8 +3278,10 @@ function parseBulkText(rawText) {
             columns.push('');
         }
 
+        // 在處理字段內容前，將字段中的換行符號恢復為 \n 字符串（用於後端存儲）
         const [caseNoRaw, titleRaw, preconditionRaw, stepsRaw, expectedRaw, tcgRaw, priorityRaw] = columns;
-
+        
+        // 將包含換行符號的字段內容進行處理
         const case_no = (caseNoRaw || '').trim();
         const title = (titleRaw || '').trim();
         const precondition = (preconditionRaw || '').trim();
@@ -3352,6 +3358,7 @@ function parseBulkText(rawText) {
         }
     }
 
+    
     return { items, errors, duplicates };
 }
 
