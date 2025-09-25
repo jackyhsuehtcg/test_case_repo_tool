@@ -5,6 +5,7 @@ import re
 import sys
 import json
 from datetime import datetime
+import shutil
 from sqlalchemy.orm import Session
 
 # --- 環境設定：確保能從 app 目錄導入 ---
@@ -293,6 +294,27 @@ class TestCaseSynchronizer:
         )
         return new_case
 
+    def _backup_database(self) -> str | None:
+        """執行 SQLite 資料庫備份。"""
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        backups_dir = os.path.join(project_root, 'backups')
+        os.makedirs(backups_dir, exist_ok=True)
+        backup_filename = f"test_case_repo_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        backup_path = os.path.join(backups_dir, backup_filename)
+        db_path = os.path.join(project_root, 'test_case_repo.db')
+
+        try:
+            shutil.copy2(db_path, backup_path)
+            if os.path.exists(backup_path) and os.path.getsize(backup_path) > 0:
+                logger.info(f"備份成功: {backup_path}")
+                return backup_path
+            else:
+                logger.error(f"備份檔案無效: {backup_path}")
+                return None
+        except OSError as e:
+            logger.error(f"備份失敗 (權限或檔案錯誤): {e}")
+            return None
+
     def execute_plan(self):
         """
         執行同步計畫。
@@ -300,6 +322,13 @@ class TestCaseSynchronizer:
         if not self.plan:
             print("\n尚未產生計畫，無法執行。")
             return
+
+        backup_path = self._backup_database()
+        if backup_path is None:
+            logger.error("備份失敗，中止同步。")
+            print("備份失敗，無法繼續同步。請檢查 backups/ 目錄權限。")
+            return
+        print(f"備份已建立: {backup_path}")
 
         logger.info("--- 開始執行同步 ---")
         try:
@@ -359,6 +388,7 @@ class TestCaseSynchronizer:
             self.db.rollback()
             logger.error(f"同步過程中發生錯誤: {e}", exc_info=True)
             print("錯誤發生，資料庫操作已還原。")
+            print(f"寫入失敗，請使用備份檔案 {backup_path} 還原資料庫。")
 
 def main():
     """
