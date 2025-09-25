@@ -344,14 +344,20 @@ class TestCaseSynchronizer:
             # 2. 本地新增
             if self.plan['create_local']:
                 logger.info(f"正在新增 {len(self.plan['create_local'])} 筆紀錄到本地...")
-                new_local_cases = []
-                for key in self.plan['create_local']:
-                    record = self.remote_cases.get(key)
-                    if record:
-                        new_case = self._convert_lark_to_local_case(record)
-                        new_local_cases.append(new_case)
-                if new_local_cases:
-                    self.db.add_all(new_local_cases)
+            # 取得已存在的 lark_record_id，避免唯一鍵衝突
+            existing_lark_ids = {c.lark_record_id for c in self.db.query(TestCaseLocalDB.lark_record_id).filter(TestCaseLocalDB.lark_record_id.isnot(None)).all()}
+            new_local_cases = []
+            for key in self.plan['create_local']:
+                record = self.remote_cases.get(key)
+                if record:
+                    # 若遠端 record_id 已存在於本地，直接跳過
+                    if record.get('record_id') in existing_lark_ids:
+                        logger.warning(f"跳過已存在的 Lark record_id {record.get('record_id')}，避免唯一鍵衝突")
+                        continue
+                    new_case = self._convert_lark_to_local_case(record)
+                    new_local_cases.append(new_case)
+            if new_local_cases:
+                self.db.add_all(new_local_cases)
 
             # 3. 遠端新增
             if self.plan['create_remote']:
