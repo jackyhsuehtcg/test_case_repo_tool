@@ -446,7 +446,8 @@ def main():
             print("  [1] 分析本地與遠端資料")
             print("  [2] 預覽同步計畫 (摘要)")
             print("  [3] 執行同步 (含詳細預覽)")
-            print("  [4] 離開")
+            print("  [4] 重新選擇團隊")
+            print("  [5] 離開")
             choice = input("請輸入選項: ")
 
             if choice == '1':
@@ -465,6 +466,37 @@ def main():
                     else:
                         print("執行已取消。")
             elif choice == '4':
+                # 重新選擇團隊
+                new_team = select_team(db)
+                if not new_team:
+                    print("未選擇任何團隊，保持原有設定。")
+                    continue
+                selected_team = new_team
+                # 重新設定 Lark 設定
+                if args.lark_url:
+                    logger.info("偵測到 --lark-url 參數，將覆寫團隊預設設定。")
+                    parsed_url = parse_lark_url(args.lark_url)
+                    if not parsed_url:
+                        logger.error("提供的 Lark URL 格式不正確。")
+                        continue
+                    lark_config['wiki_token'] = parsed_url['wiki_token']
+                    lark_config['table_id'] = parsed_url['table_id']
+                else:
+                    logger.info("使用團隊的預設 Lark 設定。")
+                    if not (selected_team.wiki_token and selected_team.test_case_table_id):
+                        logger.error(f"團隊 '{selected_team.name}' 尚未設定預設的 Lark wiki_token 或 test_case_table_id。")
+                        continue
+                    lark_config['wiki_token'] = selected_team.wiki_token
+                    lark_config['table_id'] = selected_team.test_case_table_id
+                # 重新設定 Lark client token
+                if not lark_client.set_wiki_token(lark_config['wiki_token']):
+                    logger.error("設定 Lark wiki token 失敗，請檢查 token 是否正確。")
+                    continue
+                # 重新建立 synchronizer
+                synchronizer = TestCaseSynchronizer(db, selected_team, lark_client, lark_config['table_id'])
+                logger.info(f"已重新選擇團隊: {selected_team.name}")
+                print(f"\n已切換至團隊: {selected_team.name}\n")
+            elif choice == '5':
                 print("程式結束。")
                 break
             else:
