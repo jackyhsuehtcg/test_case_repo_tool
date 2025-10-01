@@ -3728,6 +3728,10 @@ function copyTestCase(id) {
     const tcgValue = source.tcg ? source.tcg.map(t => t.text || t).join(', ') : '';
     document.getElementById('tcg').value = tcgValue;
 
+    // 設定 modalTCGSelected 並渲染 TCG 顯示
+    modalTCGSelected = tcgValue ? tcgValue.split(', ').map(s => s.trim()).filter(Boolean) : [];
+    setTimeout(() => renderModalTCGDisplay(), 100);
+
     document.getElementById('precondition').value = source.precondition || '';
     document.getElementById('test_steps').value = source.steps || '';
     document.getElementById('expected_result').value = source.expected_result || '';
@@ -3957,6 +3961,8 @@ function cloneAndAddNext(id) {
     const tcgValue = source.tcg ? source.tcg.map(t => t.text || t).join(', ') : '';
     const tcgDisplay = document.getElementById('tcg');
     if (tcgDisplay) tcgDisplay.value = tcgValue;
+    modalTCGSelected = tcgValue ? tcgValue.split(', ').map(s => s.trim()).filter(Boolean) : [];
+    setTimeout(() => renderModalTCGDisplay(), 100);
 
     document.getElementById('precondition').value = source.precondition || '';
     document.getElementById('test_steps').value = source.steps || '';
@@ -4081,7 +4087,9 @@ function showTestCaseModal(testCase = null) {
         document.getElementById('testCaseNumber').value = testCase.test_case_number || '';
         document.getElementById('priority').value = testCase.priority || 'Medium';
         const tcgValue = testCase.tcg ? testCase.tcg.map(t => t.text || t).join(', ') : '';
-        document.getElementById('tcg').value = tcgValue;
+    document.getElementById('tcg').value = tcgValue;
+    modalTCGSelected = tcgValue ? tcgValue.split(', ').map(s => s.trim()).filter(Boolean) : [];
+    setTimeout(() => renderModalTCGDisplay(), 100);
         
         // 初始化 Modal TCG 多選顯示
         modalTCGSelected = testCase.tcg ? testCase.tcg.map(t => t.text || t) : [];
